@@ -1,0 +1,293 @@
+HackSYS Set up
+==============
+- Install VirtualKD -- http://virtualkd.sysprogs.org/tutorials/install/
+	- use virtualboxintegration.exe from this link -- https://github.com/sysprogs/VirtualKD/files/2013590/Win10-64bit.zip
+- BCDEDIT /dbgsettings serial
+- Install windbg
+- set debugger path to KD in vmmon
+- disable driver signature enforcement
+	- press F8 at boot prompt
+- load the hacksys driver -- https://www.osronline.com/OsrDown.cfm/osrloaderv30.zip
+	- C:\Users\admin\Desktop\osrloaderv30\Projects\OsrLoader\kit\WNET\AMD64\FRE
+- Check that driver is loaded in windbg
+	- lm m HEVD
+
+
+HackSYS exploitation notes
+==========================
+- restart vm	
+	- taskkill /f /im windbg.exe & ping 127.0.0.1 -n 2 -w 2000 & VBoxManage controlvm "Windows 7 Hacksys" poweroff & VBoxManage snapshot "Windows 7 Hacksys" restore "ready-to-sploit-3" & ping 127.0.0.1 -n 4 -w 2000 & VBoxManage startvm "Windows 7 Hacksys"
+- Set breakpoint on IrpDeviceIoCtlHandler
+	- If in graph view click on the intructions you want
+	- hit spacebar, then look at the bottom of the IDA view for the offset
+	- bp HEVD+673c
+- run POC with bof pattern
+- at crash time
+	- dd rsp
+	- copy first block and paste into bof pattern result
+	- result tells us that overwrite is at 2056
+- set breakpoint on vuln memcpy 
+	- bu HEVD+55c6
+	
+	
+Analysis steps
+==============
+1. Get the device name
+	- look for calls to RtlInitUnicodeString which creates the unicode string containing the device name
+		- set bp on HEVD+offset for this called
+		- du rdx while broken to see what the device name is
+	- look for calls to WdmlibIoCreateDeviceSecure in DriverEntry
+2. Get the IOCTLs 
+	- run driver buddy (ncc group)
+	- run windows driver pllugin (mwr)
+		- ctrl+alt+a
+		- ctrl+alt+s
+	
+bcdedit /set TESTSIGNING ON
+bcdedit /copy {current} /d "lol" ::(this will return something, which we refer to as $GUID)
+bcdedit /set $GUID debugtype serial
+bcdedit /set $GUID debugport 4
+bcdedit /set $GUID baudrate 115200
+bcdedit /debug $GUID on
+
+
+Windows 10 kernel mitigiation bypasses
+======================================
+https://www.blackhat.com/docs/us-17/wednesday/us-17-Schenk-Taking-Windows-10-Kernel-Exploitation-To-The-Next-Level%E2%80%93Leveraging-Write-What-Where-Vulnerabilities-In-Creators-Update-wp.pdf
+
+restart vm
+==========
+taskkill /f /im windbg.exe
+VBoxManage controlvm "Windows 7 Hacksys" poweroff & VBoxManage snapshot "Windows 7 Hacksys" restore "ready-to-sploit-3" & ping 127.0.0.1 -w 2000 & VBoxManage startvm "Windows 7 Hacksys"
+
+
+grep output of command
+======================
+.shell -ci "lm" findstr /i hevd
+
+
+Calling Convention
+==================
+https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/x64-architecture
+    - The first four integer or pointer parameters are passed in the rcx, rdx, r8, and r9 registers.
+    - The first four floating-point parameters are passed in the first four SSE registers, xmm0-xmm3.
+    - The caller reserves space on the stack for arguments passed in registers. The called function can use this space to spill the contents of registers to the stack.
+    - Any additional arguments are passed on the stack.
+    - An integer or pointer return value is returned in the rax register, while a floating-point return value is returned in xmm0.
+    - rax, rcx, rdx, r8-r11 are volatile.
+    - rbx, rbp, rdi, rsi, r12-r15 are nonvolatile.
+
+
+	
+break when driver is loaded
+===========================
+sxe ld <whatever>.sys
+
+	
+Show registsers
+===============
+r
+
+single step
+===========
+p
+
+
+show which kernel modules are loaded
+=====================================
+lm
+lm m <driver name> (grep for driver name)
+
+turn on dbgprint
+================
+ed nt!Kd_Default_Mask 8
+
+
+start debugger with theme in vmmon
+==================================
+ - theme comes from here: https://github.com/fdiskyou/windbg-theme
+ - init commands come from here http://yeilho.blogspot.com/2012/10/windbg-init-script.html
+"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\windbg.exe" /k com:pipe,resets=0,reconnect,port=$(pipename) -Q -WF C:\Users\admin\Desktop\VirtualKD-3.0\windbg-white.wew -c "$$>< C:\Users\admin\Desktop\VirtualKD-3.0\dbg-prep.cmd"
+
+"C:\Program Files\Debugging Tools for Windows (x64)\windbg.exe" /k com:pipe,resets=0,reconnect,port=$(pipename) -Q -WF C:\Users\admin\Desktop\VirtualKD-3.0\windbg6-white.wew -c "$$>< C:\Users\admin\Desktop\VirtualKD-3.0\dbg-prep.cmd"
+
+
+get windbg
+==========
+https://www.technlg.net/windows/windbg-download/
+https://web.archive.org/web/20160126040726/https://msdl.microsoft.com/download/symbols/debuggers/dbg_amd64_6.11.1.404.msi
+	- gets installed here C:\Program Files\Debugging Tools for Windows (x64)
+
+ida show offets for instructions
+================================
+- hit spacebar
+
+
+
+Kernel Priv Esc
+=============================================================================
+http://mcdermottcybersecurity.com/articles/x64-kernel-privilege-escalation ==
+=============================================================================
+find address of System process
+==============================
+!process 0 0 System
+
+
+dump EPROCESS structure of system process
+=========================================
+dt _EPROCESS <address returned from command above>
+
+
+dump token of system system process
+===================================
+dq <address of system proc>+<offset to Tokenf field> L1
+
+
+search for pointer on stack
+===========================
+s -q @rsp L1000000  fffffa8007f63e40
+
+
+get process address
+==================
+!process 0 0 cmd.exe
+
+
+change process context for debugger
+===================================
+.process fffffa8006aa37a0
+
+
+dump PEB for current process
+============================
+r $peb
+
+
+Get address of GdiSharedHandleTable from _PEB
+=============================================
+dt _PEB 000007fffffdf000 GdiSharedHandleTable
+
+
+get registers for a trap frame
+===============================
+.trap 0xffffffffc800f96c
+
+
+check NpFr pool
+===============
+!poolused 2 NpFr
+
+
+find address of DATA_ENTRY records pool chunks
+==============================================
+!poolfind NpFr -nonpaged
+
+misc
+====
+cd E:\hacksys\x64stackoverflow\stackoverflow\Release
+
+
+display information about pool allocation
+=========================================
+!pool 0xFFFFFA80081D2C30
+
+
+E:\hacksys\x64stackoverflow\stackoverflow\Release\stackoverflow.exe
+E:\hacksys\x64stackoverflow\stackoverflow\x64\Release\stackoverflow.exe
+
+VBoxManage controlvm "Windows 7 Hacksys" poweroff & VBoxManage snapshot "Windows 7 Hacksys" restore "vs-runtimr-installed" & ping 127.0.0.1 -n 2 -w 2000 & VBoxManage startvm "Windows 7 Hacksys"
+
+
+"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\windbg.exe" /k com:pipe,resets=0,reconnect,port=$(pipename) -Q -WF C:\Users\admin\Desktop\VirtualKD-3.0\windbg-white.wew
+
+https://vimeo.com/190686671 - Get in the Ring0 – Understanding Windows drivers - Presented By Graham Sutherland
+============================
+- create driver handle with IoCreateDevice
+- IRP - i/o request packet. each call to a usermode i/o API sends an IRP to the driver. The IRP contains the major function (MJ) number and some optional data plus info about the i/o buffers. Driver dispatches the IRP to the appropriate handler
+- major function handlers: unload, DispatchCreate, DispatchRead, DispatchWrite, DispatchDeviceControl, DispatchPower, DipatchPnP
+- Dispatch Handlers: CreateFile will called DispatchCreate, ReadFile will call DispatchRead, etc.
+- DeviceIoControl: Custom i/o control codes
+- Handling IRPs: Get stack location with IoGetCurrentIrpStackLocation. Access IRP parameters via PIO_STACK_LOCATION. Use CompleteRequest to complete the IRP
+- Buffered IO: Buffers are note shared directly between userspace and kernel space, they are exchanged between user and kernal space.
+- Custom Control Codes: IRP_MJ_DEVICE_CONTROL --> this is the IOCTL. Triggered via DeviceIoControl calls. Usually dispatched in a switch statement in the IRP_MJ_DEVICE_CONTROL handler
+
+
+how to get memory dumps
+=======================
+https://mywindowshub.com/how-to-configure-windows-10-to-create-dump-files-on-bsod/
+
+
+helpful write-ups
+=================
+https://www.abatchy.com/2018/01/kernel-exploitation-3
+https://ioactive.com/wp-content/uploads/2018/09/Reverse_Engineering_and_Bug_Hunting_On_KMDF_Drivers.pdf
+https://www.youtube.com/watch?v=pJZjWXxUEl4 (OJ)
+https://caseymuratori.com/blog_0033 (windbg)
+https://blog.xpnsec.com/hevd-stack-overflow/
+https://srcincite.io/blog/2017/09/06/sharks-in-the-pool-mixed-object-exploitation-in-the-windows-kernel-pool.html (real kernel UAF vuln)
+http://theevilbit.blogspot.com/2017/09/pool-spraying-fun-part-1.html (using mutexes to allocate arbitrary size objects in non paged pool)
+https://docs.microsoft.com/en-us/windows/win32/sysinfo/kernel-objects (M$ incomplete list of kernel objects that can be allocated from userland)
+http://www.alex-ionescu.com/?p=231 (ionescu using named pipes arbitrary allocations in non-paged pool)
+https://securityinsecurity.github.io/exploiting-hevd-use-after-free/ (arbitrary allocations in non-paged pool)
+https://www.fuzzysecurity.com/tutorials/expDev/23.html (real kernel logic bug)
+https://www.gatewatcher.com/en/news/blog/windows-kernel-pool-spraying (how to verify your hole is where you think it is)
+https://www.siberas.de/blog/2017/10/05/exploitation_case_study_wild_pool_overflow_CVE-2016-3309_reloaded.html (wild pool overflow)
+
+
+Tools
+=====
+https://github.com/zodiacon/PoolMonX -- monitor pool allocations
+
+
+Windows Structure Index
+=======================
+https://www.geoffchappell.com/studies/windows/km/ntoskrnl/structs/eprocess/index.htm
+
+
+Token Stealing Write Up
+=======================
+https://sizzop.github.io/2016/07/07/kernel-hacking-with-hevd-part-3.html
+https://hshrzd.wordpress.com/2017/06/22/starting-with-windows-kernel-exploitation-part-3-stealing-the-access-token/
+
+
+Windows Driver Development Tutorial 1 (https://www.youtube.com/watch?v=T5VtaP-wtkk)
+===================================================================================
+- This tutorial is for WDM drivers
+- WDM is old model, less abstraction
+- WDF (Windows Driver Framework) new model, more abstracted
+
+
+Windows Driver Development Tutorial 1 (https://www.youtube.com/watch?v=T5VtaP-wtkk)
+===================================================================================
+- CPL (current privilege level). This is the kernel ring levels (ring 3 ring 0)
+	- CPL is in the last two bits of the CS register
+- User Mode App 
+	|
+	-> Kernel Service (Ntxxx system call) 
+		|
+		-> i/o manager (works using IRP (I/O Reuqest Packets))
+			|
+			-> drivers 
+				|
+				-> hardware
+
+- Driver Object - represents the image of a loaded kernel-mode driver.
+- Device Object - A device object represents a logical, virtual, or physical device for which a driver handles I/O requests.
+	- Created using IoCreateDevice
+
+	
+Important Functions
+===================
+- IoCreateDevice (creates the device with the name)
+- IoCreateSymbolicLink
+- IrpDeviceIoCtlHandler - This function dispatches IOCTL requests done from user-land to the driver
+- ProbeForRead - Read in userland buffer
+
+
+get rid of qspectre warning
+===========================
+https://developercommunity.visualstudio.com/content/problem/348985/installing-wdk-1809-enabled-spectre-mitigation-fla.html
+(add file to root of project)
+
+
+
